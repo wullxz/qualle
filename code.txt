@@ -1,0 +1,194 @@
+# ---- qu.py -----
+#!/usr/bin/env python
+
+import pygame
+import time
+import sys
+import threading
+import spidev
+import struct
+import RPi.GPIO as GPIO
+from pygame.locals import *
+from timerreset import TimerReset
+
+waitTime=10
+
+T1=38
+T2=36
+MOSI=19
+LEDON=0
+LEDOFF=1
+debug=True
+
+class Qualle(object):
+
+  def __init__(self):
+    print("Setting up the QUALLE!")
+    pygame.init()
+    self.img={}
+    self.led={}
+    self.spichan1 = {}
+    self.spichan2 = {}
+    dinfo = pygame.display.Info()
+    if debug:
+      #TODO: uncomment in production
+      self.dimension = (800, 600) #(dinfo.current_w, dinfo.current_h)
+      pygame.display.set_mode(self.dimension)#, FULLSCREEN)
+    else:
+      self.dimension = (dinfo.current_w, dinfo.current_h)
+      pygame.display.set_mode(self.dimension, FULLSCREEN)
+    self.surface = pygame.display.get_surface()
+    print("Setting up the timer for %d seconds!" % waitTime)
+    self.timer = TimerReset(waitTime, self.resetScreen)
+    self.timer.start()
+    self.setUpListener()
+    self.initPics()
+    #self.spi = spidev.SpiDev()
+    #self.spichan1[T1] = 0x8000 | 4096 | 256
+    #self.spichan2[T1] = 4096 | 256
+    #self.spichan1[T1] = 0x8000 | 4096 | 512
+    #self.spichan2[T1] = 4096 | 512
+    #self.spi.open(0, 0)
+    #self.spi.bits_per_word = 16
+    #self.spi.max_speed_hz = 3906250
+    #self.spi.mode = 1
+    #self.spi.lsbfirst = True
+    print("Done setting up the QUALLE!")
+
+  def initPics(self):
+    # load pictures
+    self.img['start'] = self.loadImg("start.jpg")
+    self.img[T1] = self.loadImg('b1.jpg')
+    self.img[T2] = self.loadImg('b2.jpg')
+
+  def loadImg(self, path):
+    image = pygame.image.load(path)
+    image = pygame.transform.scale(image, self.dimension)
+    return image
+
+  def run(self):
+    self.resetScreen()
+    # main event loop: this keeps the program running
+    while True:
+      for event in pygame.event.get():
+        if event.type == QUIT:
+          self.quit()
+        if event.type == KEYDOWN and event.key == K_q:
+          self.quit()
+
+  def setUpListener(self):
+    GPIO.setmode(GPIO.BOARD)
+    GPIO.setup(T1, GPIO.IN)
+    GPIO.setup(T2, GPIO.IN)
+    # define LEDs
+    self.led[T1] = 40
+    self.led[T2] = 37
+
+    for k,l in self.led.iteritems():
+      GPIO.setup(l, GPIO.OUT)
+
+    GPIO.add_event_detect(T1, GPIO.FALLING, callback=self.btn_handler, bouncetime=300)
+    GPIO.add_event_detect(T2, GPIO.FALLING, callback=self.btn_handler, bouncetime=300)
+
+  def quit(self):
+    self.timer.quit()
+    GPIO.cleanup()
+    pygame.quit()
+    sys.exit()
+
+  def btn_handler(self, channel):
+    self.timer.cancel()
+    # button press
+    if not GPIO.input(channel):
+      print("Button press detected: " + str(channel))
+      #self.spi.writebytes([ ord(c) for c in struct.pack("!I", self.spichan1[channel]) ])
+      for k,l in self.led.iteritems():
+        if channel != k:
+          GPIO.output(l, LEDOFF)
+      GPIO.output(self.led[channel], LEDON)
+      self.surface.blit(self.img[channel], (0, 0))
+      pygame.display.update()
+    self.timer.restart()
+
+  def resetScreen(self):
+    for k,l in self.led.iteritems():
+      GPIO.output(l, LEDOFF)
+    self.surface.blit(self.img['start'], (0, 0))
+    pygame.display.update()
+
+
+if __name__ == "__main__":
+  qualle = Qualle()
+  qualle.run()
+
+# ---- timerreset.py ----
+#!/usr/bin/env python
+
+from threading import Thread, Event, Timer
+import time
+
+def TimerReset(*args, **kwargs):
+  """ Global function for Timer """
+  return _TimerReset(*args, **kwargs)
+
+class _TimerReset(Thread):
+  """Call a function after a specified number of seconds:
+
+  t = TimerReset(30.0, f, args=[], kwargs={})
+  t.start()
+  t.cancel() # stop the timer's action if it's still waiting
+  """
+
+  def __init__(self, interval, function, args=[], kwargs={}):
+    Thread.__init__(self)
+    self.interval = interval
+    self.function = function
+    self.args = args
+    self.kwargs = kwargs
+    self.finished = Event()
+    self.started = Event()
+    self.done = Event()
+    self.ignoreOnce = Event()
+    self.ignoreOnce.clear()
+
+  def cancel(self):
+    """ Stop the timer if it hasn't finished yet"""
+    self.started.clear()
+    self.finished.set()
+    self.ignoreOnce.set()
+
+  def run(self):
+    while not self.done.isSet():
+      self.ignoreOnce.clear()
+      while self.started.isSet():
+        print("Start signal set!")
+        print("Waiting for %d seconds..." % self.interval)
+        self.finished.wait(self.interval)
+
+        print("Done waiting!")
+
+        if not self.finished.isSet() and not self.ignoreOnce.isSet():
+          print("Calling function now!")
+          self.function(*self.args, **self.kwargs)
+        else:
+          self.ignoreOnce.clear()
+          print("Not running function because finished was set!")
+        self.reset(self.interval)
+        self.started.clear()
+
+  def restart(self):
+    self.finished.clear()
+    self.started.set()
+
+  def reset(self, interval=None):
+    """Reset the timer"""
+    if interval:
+      self.interval = interval
+
+    self.started.clear()
+    self.finished.set()
+
+  def quit(self):
+    """End and destroy this timer"""
+    self.finished.set()
+    self.done.set()
