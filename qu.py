@@ -161,6 +161,12 @@ class Qualle(object):
       GPIO.output(l, LEDOFF)
     for p in self.colorpins:
       GPIO.output(p, CLEDOFF)
+    if self.cfg.General['spichan1idle'] != -1:
+      spi1 = self.calcSPIOutput(1, self.cfg.General['spichan1idle'])
+      self.sendSPI(spi1)
+    if self.cfg.General['spichan2idle'] != -1:
+      spi2 = self.calcSPIOutput(0, self.cfg.General['spichan2idle'])
+      self.sendSPI(spi2)
     self.surface.fill((0, 0, 0))
     self.surface.blit(self.img['default'], (0, 0))
     pygame.display.update()
@@ -176,7 +182,7 @@ class Qualle(object):
     if value > limit:
       value = limit
     # assemble first byte
-    tmp = value >> 8
+    tmp = value >> 6
     val1 = tmp | val1
     # assemble 2nd byte
     tmp = value << 2
